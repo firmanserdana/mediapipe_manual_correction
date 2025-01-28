@@ -1,5 +1,5 @@
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, QEventLoop
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPushButton, QFileDialog, QWidget, QHBoxLayout, QSlider, QTableWidget, QTableWidgetItem, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPushButton, QFileDialog, QWidget, QHBoxLayout, QSlider, QTableWidget, QTableWidgetItem, QMessageBox, QAbstractItemView, QInputDialog
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.Qt import Qt
 import mediapipe as mp
@@ -7,7 +7,6 @@ import cv2
 import pandas as pd
 import sys
 import queue
-from PyQt5.QtWidgets import QAbstractItemView, QInputDialog  # Add this import at the top
 from datetime import datetime, timedelta
 import numpy as np
 from scipy.signal import butter, filtfilt
@@ -39,7 +38,7 @@ class HandTrackingWorker(QThread):
             return None
             
         smoothed_data = []
-        for landmark in range(21):
+        for landmark in range(22):
             landmark_data = landmarks_df[landmarks_df['landmark_index'] == landmark].copy()
             if not landmark_data.empty:
                 landmark_data['x'] = self.low_pass_filter(landmark_data['x'].values)
@@ -79,6 +78,19 @@ class HandTrackingWorker(QThread):
                                 "y": landmark.y,
                                 "z": landmark.z
                             })
+                        # Approximate arm with offsets from x, y, z
+                        wrist = hand_landmarks.landmark[0]
+                        x_offset = 0.02
+                        y_offset = 0.15
+                        z_offset = -0.03
+
+                        frame_landmarks.append({
+                            "Frame": frame_idx,
+                            "landmark_index": 21,  # virtual arm
+                            "x": wrist.x + x_offset,
+                            "y": wrist.y - y_offset,
+                            "z": wrist.z + z_offset
+                        })
                     all_landmarks.append(pd.DataFrame(frame_landmarks))
 
                 # Emit progress
@@ -331,7 +343,7 @@ class HandTrackingApp(QMainWindow):
             return None
             
         smoothed_data = []
-        for landmark in range(21):
+        for landmark in range(22):
             landmark_data = landmarks_df[landmarks_df['landmark_index'] == landmark].copy()
             if not landmark_data.empty:
                 landmark_data['x'] = self.low_pass_filter(landmark_data['x'].values)
@@ -537,12 +549,13 @@ class HandTrackingApp(QMainWindow):
             
             # First draw connection lines (behind dots)
             hand_connections = [
-                (0, 1), (1, 2), (2, 3), (3, 4),    # Thumb
-                (0, 5), (5, 6), (6, 7), (7, 8),    # Index finger
-                (0, 9), (9, 10), (10, 11), (11, 12),    # Middle finger
-                (0, 13), (13, 14), (14, 15), (15, 16),  # Ring finger
-                (0, 17), (17, 18), (18, 19), (19, 20),  # Pinky
-                (5, 9), (9, 13), (13, 17)  # Metacarpal connections
+                (0, 1), (1, 2), (2, 3), (3, 4),
+                (0, 5), (5, 6), (6, 7), (7, 8),
+                (0, 9), (9, 10), (10, 11), (11, 12),
+                (0, 13), (13, 14), (14, 15), (15, 16),
+                (0, 17), (17, 18), (18, 19), (19, 20),
+                # connect wrist to virtual arm
+                (0, 21),
             ]
 
             # Draw larger hit areas first (semi-transparent)
