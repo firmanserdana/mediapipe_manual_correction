@@ -19,12 +19,13 @@ class HandTrackingWorker(QThread):
     error = pyqtSignal(str)  # Emit errors to the main thread
     finished_tracking = pyqtSignal()  # Emit when tracking is complete
 
-    def __init__(self, video_path, hands, result_queue):
+    def __init__(self, video_path, hands, result_queue, include_virtual_arm):
         super().__init__()
         self.video_path = video_path
         self.hands = hands
         self.running = True
         self.result_queue = result_queue
+        self.include_virtual_arm = include_virtual_arm
     
     def low_pass_filter(self, data, cutoff=1, fs=30, order=4):
         nyquist = 0.5 * fs
@@ -79,18 +80,15 @@ class HandTrackingWorker(QThread):
                                 "z": landmark.z
                             })
                         # Approximate arm with offsets from x, y, z
-                        wrist = hand_landmarks.landmark[0]
-                        x_offset = 0.02
-                        y_offset = 0.15
-                        z_offset = -0.03
-
-                        frame_landmarks.append({
-                            "Frame": frame_idx,
-                            "landmark_index": 21,  # virtual arm
-                            "x": wrist.x + x_offset,
-                            "y": wrist.y - y_offset,
-                            "z": wrist.z + z_offset
-                        })
+                        if self.include_virtual_arm:
+                            wrist = hand_landmarks.landmark[0]
+                            frame_landmarks.append({
+                                "Frame": frame_idx,
+                                "landmark_index": 21,
+                                "x": wrist.x + 0.02,
+                                "y": wrist.y - 0.15,
+                                "z": wrist.z - 0.03
+                            })
                     all_landmarks.append(pd.DataFrame(frame_landmarks))
 
                 # Emit progress
@@ -483,7 +481,7 @@ class HandTrackingApp(QMainWindow):
 
         # Load and add MediaPipe hand landmark reference image
         try:
-            legend_img = cv2.imread("Code\mediapipe\MediaPipe-Hands-21-landmarks-13.png", cv2.IMREAD_UNCHANGED)
+            legend_img = cv2.imread("Code\mediapipe\manual_correction_util\mediapipe_manual_correction\MediaPipe-Hands-21-landmarks-13.png", cv2.IMREAD_UNCHANGED)
             if legend_img is not None:
                 # Scale legend image (adjust size as needed)
                 legend_height = 150  # Desired height in pixels
@@ -549,11 +547,12 @@ class HandTrackingApp(QMainWindow):
             
             # First draw connection lines (behind dots)
             hand_connections = [
-                (0, 1), (1, 2), (2, 3), (3, 4),
-                (0, 5), (5, 6), (6, 7), (7, 8),
-                (0, 9), (9, 10), (10, 11), (11, 12),
-                (0, 13), (13, 14), (14, 15), (15, 16),
-                (0, 17), (17, 18), (18, 19), (19, 20),
+                (0, 1), (1, 2), (2, 3), (3, 4),    # Thumb
+                (0, 5), (5, 6), (6, 7), (7, 8),    # Index finger
+                (0, 9), (9, 10), (10, 11), (11, 12),    # Middle finger
+                (0, 13), (13, 14), (14, 15), (15, 16),  # Ring finger
+                (0, 17), (17, 18), (18, 19), (19, 20),  # Pinky
+                (5, 9), (9, 13), (13, 17),  # Metacarpal connections
                 # connect wrist to virtual arm
                 (0, 21),
             ]
@@ -621,6 +620,9 @@ class HandTrackingApp(QMainWindow):
         if not self.video_path:
             QMessageBox.warning(self, "Warning", "Please load a video first!")
             return
+        
+        answer, ok = QInputDialog.getText(self, "Include Virtual Arm?", "Include virtual arm? (yes/no):", text="yes")
+        include_virtual_arm = ok and answer.lower().startswith("y")
 
         # Stop existing worker if running
         if self.worker:
@@ -628,9 +630,10 @@ class HandTrackingApp(QMainWindow):
 
         # Clear existing data
         self.landmarks_df = pd.DataFrame()
+        self.worker = HandTrackingWorker(self.video_path, self.hands, self.result_queue, include_virtual_arm)
 
         # Start worker
-        self.worker = HandTrackingWorker(self.video_path, self.hands, self.result_queue)
+        self.worker = HandTrackingWorker(self.video_path, self.hands, self.result_queue, include_virtual_arm)
         self.worker.frame_processed.connect(self.on_frame_processed)
         self.worker.progress.connect(self.update_progress)
         self.worker.error.connect(self.handle_worker_error)
@@ -786,6 +789,7 @@ class HandTrackingApp(QMainWindow):
         if save_path:
             try:
                 df_to_save = self.landmarks_df.copy()
+                df_to_save = df_to_save.sort_values(["Frame", "landmark_index"])
                 df_to_save['timestamp'] = df_to_save['Frame'].apply(
                     lambda x: self.frame_to_timestamp(x).strftime("%Y-%m-%d %H:%M:%S.%f")
                 )
