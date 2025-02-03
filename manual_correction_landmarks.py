@@ -240,6 +240,19 @@ class HandTrackingApp(QMainWindow):
         if not ok:
             return
         
+        # Select specific plane to interpolate (comma-separated, leave empty for all)
+        plane_indices, ok = QInputDialog.getText(self, "Plane Indices", 
+            "Enter planes to interpolate (comma-separated, e.g. x,y,z or leave empty for all):")
+        if not ok:
+            return
+                
+        # Convert plane indices to coordinate mapping
+        coords_to_interpolate = []
+        if plane_indices:
+            coords_to_interpolate = [p.strip().lower() for p in plane_indices.split(",")]
+        else:
+            coords_to_interpolate = ['x', 'y', 'z']
+
         if landmark_indices:
             landmark_indices = [int(idx.strip()) for idx in landmark_indices.split(",")]
         else:
@@ -255,21 +268,28 @@ class HandTrackingApp(QMainWindow):
         
         # Interpolate between the two frames
         interpolated_landmarks = []
-        for frame_idx in range(start_frame, end_frame + 1):  # Include start_frame and end_frame
-            # Calculate interpolation factor
+        for frame_idx in range(start_frame, end_frame + 1):
             alpha = (frame_idx - start_frame) / (end_frame - start_frame)
             
-            # Interpolate landmarks
+            # Get current frame data
+            current_frame = self.get_landmarks_for_frame(frame_idx)
+            
             for _, start_row in start_landmarks.iterrows():
                 if start_row["landmark_index"] in landmark_indices:
                     end_row = end_landmarks[end_landmarks["landmark_index"] == start_row["landmark_index"]]
+                    current_row = current_frame[current_frame["landmark_index"] == start_row["landmark_index"]]
                     
-                    if not end_row.empty:
-                        # Interpolate X, Y, Z coordinates
-                        x = (1 - alpha) * start_row["x"] + alpha * end_row["x"].values[0]
-                        y = (1 - alpha) * start_row["y"] + alpha * end_row["y"].values[0]
-                        z = (1 - alpha) * start_row["z"] + alpha * end_row["z"].values[0]
+                    if not end_row.empty and not current_row.empty:
+                        # Use current values for unselected planes, interpolate selected ones
+                        x = current_row["x"].values[0] if 'x' not in coords_to_interpolate else \
+                            start_row["x"] + alpha * (end_row["x"].values[0] - start_row["x"])
                         
+                        y = current_row["y"].values[0] if 'y' not in coords_to_interpolate else \
+                            start_row["y"] + alpha * (end_row["y"].values[0] - start_row["y"])
+                        
+                        z = current_row["z"].values[0] if 'z' not in coords_to_interpolate else \
+                            start_row["z"] + alpha * (end_row["z"].values[0] - start_row["z"])
+
                         interpolated_landmarks.append({
                             "Frame": frame_idx,
                             "landmark_index": start_row["landmark_index"],
